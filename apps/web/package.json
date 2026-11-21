@@ -1,0 +1,40 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test:view-state": "node --import tsx --test tests/view-state.test.tsx",
+    "test:lint-security": "node --test tests/lint-security.test.mjs",
+    "postinstall": "node scripts/patch-braces.mjs",
+    "prelint": "node scripts/patch-braces.mjs",
+    "prebuild": "node scripts/patch-braces.mjs",
+    "predev": "node scripts/patch-braces.mjs",
+    "test:braces-security": "node scripts/patch-braces.mjs && node --test tests/braces-security.test.mjs tests/braces-patch-install.test.mjs",
+    "test": "npm run test:braces-security && npm run test:lint-security && npm run test:view-state && npm run test:session && npm run test:rep-editor && npm run test:manager-routes",
+    "test:session": "node --import tsx --test tests/browser-session.test.ts tests/browser-tab.test.ts",
+    "test:rep-editor": "node --import tsx --test tests/rep-editor.test.tsx",
+    "test:manager-routes": "node --import tsx --test tests/manager-routes.test.ts"
+  },
+  "dependencies": {
+    "next": "16.3.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "jsdom": "^30.1.2",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  }
+}

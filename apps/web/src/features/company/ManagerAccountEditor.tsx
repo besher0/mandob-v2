@@ -1,0 +1,13 @@
+"use client";
+import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {request,type Named} from '@/lib/api';
+import s from '../manager/ManagerApp.module.css';
+type Choice={kind:'account';manager:Named&{username:string}}|{kind:'assignment';team:Named&{members:{user:Named}[]}};
+export type ManagerEditChoice=Choice;
+export function ManagerAccountEditor({choice,managers,token,onClose,onSaved}:{choice:Choice;managers:Named[];token:string;onClose:()=>void;onSaved:()=>void}){
+ const dialog=useRef<HTMLDialogElement>(null),lock=useRef(false);const [busy,setBusy]=useState(false),[error,setError]=useState('');
+ useEffect(()=>{dialog.current?.showModal();},[]);
+ async function save(e:FormEvent<HTMLFormElement>){e.preventDefault();if(lock.current)return;lock.current=true;setBusy(true);setError('');const values=new FormData(e.currentTarget);const account=choice.kind==='account';const path=account?`managers/${choice.manager.id}`:`teams/${choice.team.id}/manager`;const body=account?{name:values.get('name'),username:values.get('username')}:{managerId:values.get('managerId'),expectedManagerIds:choice.team.members.map(m=>m.user.id)};
+ try{await request(`/company/setup/${path}`,token,{method:'PATCH',body:JSON.stringify(body)});onSaved();}catch(e){setError(e instanceof Error?e.message:'تعذر الحفظ.');}finally{lock.current=false;setBusy(false);}}
+ return <dialog ref={dialog} className={`${s.dialog} ${s.editorDialog}`} onCancel={e=>{if(busy)e.preventDefault();else onClose();}}><form onSubmit={save} className={s.companyForm}><h3>{choice.kind==='account'?'تعديل حساب المدير':`تغيير مدير ${choice.team.name}`}</h3><fieldset disabled={busy} style={{border:0}}>{choice.kind==='account'?<><label>الاسم<input name="name" required maxLength={120} defaultValue={choice.manager.name}/></label><label>اسم الدخول<input name="username" required pattern="[A-Za-z0-9._-]{3,80}" dir="ltr" defaultValue={choice.manager.username}/></label></>:<><p>المدير الحالي: {choice.team.members.map(m=>m.user.name).join('، ')||'غير معيّن'}</p><p>يستلم المدير الجديد بيانات الفريق، وينتهي وصول المدير السابق لهذا الفريق. تبقى الجولات والزيارات محفوظة.</p><label>المدير الجديد<select name="managerId" required defaultValue=""><option value="" disabled>اختر المدير</option>{managers.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label></>}<div className={s.editorActions}><button className={s.btn}>{busy?'جارِ الحفظ…':'حفظ'}</button><button type="button" className={`${s.btn} ${s.secondary}`} onClick={onClose}>إلغاء</button></div></fieldset>{error&&<p role="alert" className={s.error}>{error}</p>}</form></dialog>;
+}
