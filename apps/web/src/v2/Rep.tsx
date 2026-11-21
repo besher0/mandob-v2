@@ -31,7 +31,7 @@ function RepHome({go, revision}: Props) {
       <button type="button" className="v2-shortcut" onClick={() => go('plan')}><strong>الخطة والأصناف</strong><span>{w.products?.length ?? 0} أصناف</span><span>{w.cycle?.remainingDays ?? '—'} يوم متبقٍ</span></button>
     </div></Section>
     <Section title="تنبيهات"><div className="stats">
-      <Metric label="أطباء A غير المزارين" value={d.overdueDoctors?.length ?? '—'}/>
+      <Metric label="أطباء A غير المزارين" value={d.overdueDoctors?.total ?? '—'}/>
       <Metric label="الأهداف المكتملة" value={d.cycleProgress?.completedTargets ?? '—'}/>
     </div><Action onClick={() => go('analytics')}>عرض التحليل</Action></Section>
     <div className="v2-action-bar"><Action onClick={() => go('round')}>+ ابدأ جولة</Action></div>
@@ -99,8 +99,9 @@ function RepTargets({type,revision}: {type:'DOCTOR'|'PHARMACY'|'HOSPITAL';revisi
     <button className="btn" type="button" disabled={(page+1)*pageSize>=items.length} onClick={()=>setPage(page+1)}>التالي</button>
   </div></Section></>;
 }
-function NewRound({revision,go,preselectedArea,update}: {revision:number;go:(s:string)=>void;preselectedArea?:string|null;update:()=>void}) {
+function NewRound({revision,go,preselectedArea,editRoundId,update}: {revision:number;go:(s:string)=>void;preselectedArea?:string|null;editRoundId?:string|null;update:()=>void}) {
   const catalog=useRemote('/rep/workspace',revision);
+  const editDetails=useRemote(editRoundId?'/rep/rounds/'+encodeURIComponent(editRoundId)+'/edit':null,revision);
   const [type,setType]=useState<'DOCTOR'|'PHARMACY'|'HOSPITAL'>('DOCTOR');
   const [areas,setAreas]=useState<string[]>(preselectedArea?[preselectedArea]:[]);
   const [targets,setTargets]=useState<string[]>([]);
@@ -115,6 +116,13 @@ function NewRound({revision,go,preselectedArea,update}: {revision:number;go:(s:s
   const allowed=new Set(eligible.map((t:any)=>t.id));
   const selectedTargets=targets.filter(id=>allowed.has(id));
   useEffect(()=>{if(preselectedArea)setAreas([preselectedArea]);},[preselectedArea]);
+  useEffect(()=>{
+    const detail=editDetails.data;
+    if(!detail||!editRoundId)return;
+    setType(detail.type);setAreas(detail.areaIds||[]);
+    setTargets((detail.targets||[]).map((t:any)=>t.id));setProducts(detail.productIds||[]);
+    setVisitDate(detail.visitDate);setNotes(detail.notes||'');setStage(3);setRetry(null);
+  },[editDetails.data,editRoundId]);
   function selectAreas(value:string[]) {setAreas(value);setTargets([]);setRetry(null);}
   function selectTargets(value:string[]) {setTargets(value);setRetry(null);}
   async function submit() {
@@ -140,12 +148,14 @@ function NewRound({revision,go,preselectedArea,update}: {revision:number;go:(s:s
         payload={clientRef:crypto.randomUUID(),cycleId:catalog.data.cycle.id,type,areaIds:areas,targetIds:selectedTargets,productIds:products,visitDate,notes,...location};
         setRetry({signature,payload});
       }
-      const result=await write('/rep/rounds',payload);
-      setDone('تم تسجيل الجولة، عدد الزيارات: '+(result.visitCount??selectedTargets.length));
+      const result=editRoundId
+        ? await write('/rep/rounds/'+encodeURIComponent(editRoundId),{...payload,revision:editDetails.data.revision},'PATCH')
+        : await write('/rep/rounds',payload);
+      setDone((editRoundId?'تم تعديل':'تم تسجيل')+' الجولة، عدد الزيارات: '+(result.visitCount??selectedTargets.length));
       setRetry(null);update();setTimeout(()=>go('history'),500);
     }catch(e:any){setError(e.message);}finally{setBusy(false);}
   }
-  return <Section title="ابدأ جولة جديدة"><Wait state={catalog}/><Wait state={state}/>
+  return <Section title={editRoundId?'تعديل الجولة':'ابدأ جولة جديدة'}><Wait state={catalog}/><Wait state={state}/><Wait state={editDetails}/>
     <div className="v2-steps">{['نوع الجولة','المناطق','الجهات','المراجعة والحفظ'].map((t,i)=>
       <span key={i} className={i===stage?'active':''}>{i+1}. {t}</span>)}</div>
     {stage===0&&<div className="v2-quick-grid">{Object.entries(kinds).map(([key,label])=>
@@ -159,7 +169,7 @@ function NewRound({revision,go,preselectedArea,update}: {revision:number;go:(s:s
     {stage===3&&<><div className="stats"><Metric label="النوع" value={kinds[type]}/><Metric label="المناطق" value={areas.length}/><Metric label="الجهات" value={selectedTargets.length}/></div>
       <label className="field">تاريخ الجولة<input type="date" value={visitDate} max={today()} onChange={e=>{setVisitDate(e.target.value);setRetry(null)}}/></label>
       <label className="field">ملاحظات<textarea value={notes} onChange={e=>{setNotes(e.target.value);setRetry(null)}} rows={3}/></label>
-      <Notice>الموقع يُلتقط عند الحفظ حسب سياسة الشركة. عند تعذر الطلب يمكنك إعادة المحاولة بنفس بيانات الجولة دون تكرار تسجيلها.</Notice>
+      <Notice>{editRoundId?'سيُحفظ التعديل وفق صلاحيتك ومهلة تعديل الجولة.':'الموقع يُلتقط عند الحفظ حسب سياسة الشركة. عند تعذر الطلب يمكنك إعادة المحاولة بنفس بيانات الجولة دون تكرار تسجيلها.'}</Notice>
     </>}
     <Failure error={error}/><Done message={done}/>
     <div className="v2-action-bar">
@@ -169,17 +179,30 @@ function NewRound({revision,go,preselectedArea,update}: {revision:number;go:(s:s
     </div>
   </Section>;
 }
-function VisitHistory({revision}: {revision:number}) {
+function VisitHistory({revision,update,go}: {revision:number;update:()=>void;go:(page:string)=>void}) {
   const [type,setType]=useState('DOCTOR');
   const state=useRemote('/rep/visit-history?type='+type,revision);
+  const [error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+  async function cancel(item:any) {
+    if(!item.roundId||!item.canEdit||!window.confirm('هل تريد إلغاء هذه الجولة؟ سيتم إلغاء زياراتها المسجلة.'))return;
+    setBusy(true);setError('');setMessage('');
+    try{await write('/rep/rounds/'+encodeURIComponent(item.roundId)+'/cancel',{revision:item.revision});
+      setMessage('تم إلغاء الجولة.');update();
+    }catch(e:any){setError(e.message)}finally{setBusy(false)}
+  }
   return <Section title="سجل زياراتي"><div className="v2-filter-bar"><select value={type} onChange={e=>setType(e.target.value)}>
     {Object.entries(kinds).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></div>
     <Wait state={state}/><ArrayList items={state.data?.items||[]} columns={[
-      {label:'الجهة',show:x=>x.name||x.targetName||'—'},
+      {label:'الجهة',show:x=>x.targets?.map((t:any)=>t.name).join('، ')||'—'},
       {label:'تاريخ الجولة',show:x=>dateText(x.visitDate||x.date||x.completedAt)},
       {label:'المناطق',show:x=>x.areas?.map((a:any)=>a.name).join('، ')||'—'},
-      {label:'الزيارات',show:x=>x.visitCount??x.count??1}
-    ]}/></Section>;
+      {label:'الزيارات',show:x=>x.targets?.length??0},
+      {label:'الحالة',show:x=>x.status==='CANCELLED'?'ملغاة':'مكتملة'},
+      {label:'الإجراء',show:x=>x.canEdit&&x.roundId?<div className="v2-inline-controls">
+        <button type="button" className="btn" onClick={()=>go('round?editId='+encodeURIComponent(x.roundId))}>تعديل</button>
+        <button type="button" className="btn danger" disabled={busy} onClick={()=>cancel(x)}>إلغاء</button>
+      </div>:'—'}
+    ]}/><Failure error={error}/><Done message={message}/></Section>;
 }
 function RepAnalytics({revision}: {revision:number}) {
   const state=useRemote('/rep/analytics',revision);
@@ -273,8 +296,8 @@ export function RepScreen(props: Props) {
   if(page==='doctors')return <RepTargets type="DOCTOR" revision={revision}/>;
   if(page==='pharmacies')return <RepTargets type="PHARMACY" revision={revision}/>;
   if(page==='hospitals')return <RepTargets type="HOSPITAL" revision={revision}/>;
-  if(page==='round')return <NewRound revision={revision} go={go} preselectedArea={preselectedArea} update={update}/>;
-  if(page==='history')return <VisitHistory revision={revision}/>;
+  if(page==='round')return <NewRound revision={revision} go={go} preselectedArea={preselectedArea} editRoundId={new URLSearchParams(window.location.search).get('editId')} update={update}/>;
+  if(page==='history')return <VisitHistory revision={revision} update={update} go={go}/>;
   if(page==='analytics')return <RepAnalytics revision={revision}/>;
   if(page==='reports')return <RepReports revision={revision} update={update}/>;
   if(page==='leaves')return <RepLeaves revision={revision} update={update}/>;
