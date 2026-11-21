@@ -151,12 +151,25 @@ function App() {
         <RepScreen user={user} page={page} revision={revision} go={go} preselectedArea={route.areaId} update={update}/>}
       </main>
     </div>
-    {role==='REP'&&<nav className="rep-bottom-nav v2-mobile-nav" aria-label="التنقل السريع">
-      {menu.filter(m=>['dashboard','areas','round','reports','account'].includes(m.key)).map(entry=>
-        <button key={entry.key} type="button" className={page===entry.key?'active':''} onClick={()=>go(entry.key)}>
-          <span>{entry.icon}</span><small>{entry.label}</small>
-        </button>)}
-    </nav>}
+    {role==='REP'&&<>
+      {page!=='round'&&menu.some(m=>m.key==='round')&&<button type="button" className="rep-tour-fab v2-rep-tour-fab"
+        onClick={()=>go('round')} aria-label="ابدأ جولة جديدة">
+        <span aria-hidden="true">▶</span> {page==='doctors'?'جولة أطباء':page==='pharmacies'?'جولة صيدليات':
+          page==='hospitals'?'جولة مشافي':'ابدأ جولة'}
+      </button>}
+      <nav className="rep-bottom-nav v2-mobile-nav" aria-label="التنقل الرئيسي للمندوب">
+        {(['dashboard','analytics','reports','account'] as const).map(key=>{
+          const entry=menu.find(m=>m.key===key);
+          if(!entry)return null;
+          const icon={dashboard:'home',analytics:'analytics',reports:'reports',account:'account'}[key];
+          return <button key={entry.key} type="button" className={page===entry.key?'active':''}
+            aria-current={page===entry.key?'page':undefined} onClick={()=>go(entry.key)}>
+            <img className="rep-nav-icon" src={'/icons/'+icon+'.svg'} alt=""/>
+            <span>{entry.label}</span>
+          </button>;
+        })}
+      </nav>
+    </>}
   </div>;
 }
 export default App;
