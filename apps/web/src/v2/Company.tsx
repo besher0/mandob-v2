@@ -1,6 +1,6 @@
 import React,{useState} from 'react';
 import {CurrentUser,write} from './api';
-import {Action,ArrayList,Done,Empty,Failure,Metric,Section,SelectMany,Wait,dateText,useRemote} from './ui';
+import {Action,ArrayList,Done,Empty,Failure,Metric,Notice,Section,SelectMany,Wait,dateText,useRemote} from './ui';
 
 export function Platform({revision,update}:{revision:number;update:()=>void}) {
   const state=useRemote('/platform/companies',revision);
