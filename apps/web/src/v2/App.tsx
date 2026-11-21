@@ -82,6 +82,7 @@ function Login({onLogin}:{onLogin:(user:CurrentUser)=>void}){
 function App() {
   const [user,setUser]=useState<CurrentUser|null>(null),[booting,setBooting]=useState(true);
   const [route,setRoute]=useState(parseUrl),[revision,setRevision]=useState(0),[loggingOut,setLoggingOut]=useState(false);
+  const [repAlertsOpen,setRepAlertsOpen]=useState(false);
   const update=()=>setRevision(n=>n+1);
   useEffect(()=>{let alive=true;restore().then(u=>{if(alive)setUser(u)}).finally(()=>{if(alive)setBooting(false)});
     const pop=()=>setRoute(parseUrl());window.addEventListener('popstate',pop);
@@ -138,12 +139,31 @@ function App() {
       </div></div>
     </aside>
     <div className="v2-main">
-      <header className="v2-topbar company-topbar"><div><h1>{titles[page]||'لوحة التحكم'}</h1>
+      {role==='REP'?<header className="v2-topbar rep-classic-topbar">
+        <div className="rep-header-brand">
+          <span className="rep-header-logo" aria-hidden="true">M</span>
+          <span className="rep-header-copy"><strong>MedREP</strong>
+            <small>{page==='dashboard'?'المساعد اليومي':titles[page]||'المندوب الطبي'}</small></span>
+        </div>
+        <div className="rep-header-notifications">
+          <button type="button" className="rep-header-bell" aria-label="عرض التنبيهات المهمة"
+            aria-expanded={repAlertsOpen} onClick={()=>setRepAlertsOpen(open=>!open)}>🔔</button>
+          {repAlertsOpen&&<div className="rep-header-alert-panel">
+            <strong>تنبيهات مهمة</strong>
+            <button type="button" onClick={()=>{setRepAlertsOpen(false);go('analytics')}}>
+              أطباء A غير المزارين
+            </button>
+            <button type="button" onClick={()=>{setRepAlertsOpen(false);go('analytics')}}>
+              تغطية المناطق
+            </button>
+          </div>}
+        </div>
+      </header>:<header className="v2-topbar company-topbar"><div><h1>{titles[page]||'لوحة التحكم'}</h1>
         <p>نظام متابعة المندوبين والفرق الطبية</p></div>
         <div className="v2-top-actions"><span>{user.name}</span>
           <button type="button" className="btn" onClick={update} title="تحديث البيانات">↻ تحديث</button>
         </div>
-      </header>
+      </header>}
       <main className="v2-content">
         {page==='platform'?<Platform revision={revision} update={update}/>:
         page.startsWith('company-')?<CompanyScreen page={page} revision={revision} update={update}/>:
