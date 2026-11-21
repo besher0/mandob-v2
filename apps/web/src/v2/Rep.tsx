@@ -136,7 +136,7 @@ function NewRound({revision,go,preselectedArea,editRoundId,update}: {revision:nu
       if(!payload){
         const policy=catalog.data.roundLocationPolicy || 'DISABLED';
         let location:any={};
-        if(policy!=='DISABLED'){
+        if(!editRoundId&&policy!=='DISABLED'){
           try {
             const fix=await new Promise<GeolocationPosition>((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:20000,maximumAge:0}));
             location={latitude:fix.coords.latitude,longitude:fix.coords.longitude,accuracy:fix.coords.accuracy,locationCapturedAt:new Date(fix.timestamp).toISOString()};
