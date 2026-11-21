@@ -1,0 +1,170 @@
+import 'reflect-metadata';
+import 'dotenv/config';
+import {describe,it,expect} from 'vitest';
+import {Test} from '@nestjs/testing';
+import {ValidationPipe} from '@nestjs/common';
+import {ConfigService} from '@nestjs/config';
+import {JwtService} from '@nestjs/jwt';
+import request from 'supertest';
+import {randomUUID} from 'node:crypto';
+// Use the tsc output so the HTTP test exercises production decorator metadata.
+import {AppModule} from '../dist/app.module.js';
+import {PrismaService} from '../dist/database/prisma.service.js';
+
+describe.skipIf(process.env.RUN_DB_TESTS!=='1')('HTTP authorization and manager transfer',()=>{
+ it('validates requests, isolates tenants, and revokes the previous manager scope with their existing token',async()=>{
+  const prisma=new PrismaService(new ConfigService(process.env));await prisma.$connect();const rollback=new Error('ROLLBACK_HTTP');const code=`http-${randomUUID().slice(0,24)}`;
+  try{await expect(prisma.$transaction(async tx=>{
+   let sequence=0;
+   const db=new Proxy(tx,{get(obj,key){if(key==='onModuleInit'||key==='onModuleDestroy')return async()=>{};if(key==='$transaction')return async fn=>{const point=`http_${++sequence}`;await tx.$executeRawUnsafe(`SAVEPOINT ${point}`);try{const value=await fn(tx);await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${point}`);return value;}catch(e){await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${point}`);await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${point}`);throw e;}};return Reflect.get(obj,key);}});
+   const module=await Test.createTestingModule({imports:[AppModule]}).overrideProvider(PrismaService).useValue(db).compile();
+   const app=module.createNestApplication();app.setGlobalPrefix('api/v1');app.useGlobalPipes(new ValidationPipe({whitelist:true,forbidNonWhitelisted:true,transform:true}));await app.init();
+   try{
+    const server=app.getHttpServer();
+    const role=await tx.role.findUniqueOrThrow({where:{code:'SUPER_ADMIN'}});
+    const root=await tx.user.create({data:{username:randomUUID(),name:'HTTP fixture admin',passwordHash:'not-a-login',roles:{create:{roleId:role.id}}}});
+    const rootToken=await new JwtService().signAsync({sub:root.id,organizationId:null,roles:['SUPER_ADMIN'],permissions:[],username:root.username,type:'access'},{secret:process.env.JWT_ACCESS_SECRET,expiresIn:'5m'});
+    const bearer=token=>`Bearer ${token}`;
+    const post=(path,token,body)=>request(server).post(`/api/v1/${path}`).set('Authorization',bearer(token)).send(body);
+    const patch=(path,token,body)=>request(server).patch(`/api/v1/${path}`).set('Authorization',bearer(token)).send(body);
+    const get=(path,token)=>request(server).get(`/api/v1/${path}`).set('Authorization',bearer(token));
+    await request(server).get('/api/v1/company/setup').expect(401);
+    await get('company/setup','invalid-token').expect(401);
+    const password='Http-test-password-2026',ownerUsername=randomUUID();
+    const company=(await post('platform/companies',rootToken,{name:'HTTP company',code,ownerName:'Owner',username:ownerUsername,password}).expect(201)).body;
+    const login=async username=>(await request(server).post('/api/v1/auth/login').send({username,password}).expect(201)).body;
+    const owner=(await login(ownerUsername)).accessToken;
+    await get('platform/companies',owner).expect(403);
+    await post('company/setup/provinces',owner,{name:'Invalid',organizationId:randomUUID()}).expect(400);
+    const province=(await post('company/setup/provinces',owner,{name:'Province'}).expect(201)).body;
+    const oldUsername=randomUUID(),newUsername=randomUUID();
+    const oldManager=(await post('company/setup/managers',owner,{name:'Old manager',username:oldUsername,password}).expect(201)).body;
+    const newManager=(await post('company/setup/managers',owner,{name:'New manager',username:newUsername,password}).expect(201)).body;
+    const oldToken=(await login(oldUsername)).accessToken,newToken=(await login(newUsername)).accessToken;
+    const team=(await post('company/setup/teams',owner,{name:'RX',provinceId:province.id,managerId:oldManager.id,specialtyIds:[],productIds:[]}).expect(201)).body;
+    expect((await get('manager/workspace',oldToken).expect(200)).body.teams.map(t=>t.id)).toContain(team.id);
+    await post('company/setup/provinces',oldToken,{name:'Denied'}).expect(403);
+    await patch(`company/setup/teams/${team.id}/manager`,oldToken,{managerId:newManager.id,expectedManagerIds:[oldManager.id]}).expect(403);
+    await patch('company/setup/teams/not-a-uuid/manager',owner,{managerId:newManager.id,expectedManagerIds:[]}).expect(400);
+    const otherUsername=randomUUID();
+    await post('platform/companies',rootToken,{name:'Other HTTP company',code:`other-${randomUUID().slice(0,24)}`,ownerName:'Other',username:otherUsername,password}).expect(201);
+    const otherToken=(await login(otherUsername)).accessToken;
+    await patch(`company/setup/managers/${oldManager.id}`,otherToken,{name:'Denied',username:randomUUID()}).expect(403);
+    await patch(`company/setup/teams/${team.id}/manager`,otherToken,{managerId:newManager.id,expectedManagerIds:[oldManager.id]}).expect(403);
+    await patch(`company/setup/teams/${team.id}/manager`,owner,{managerId:newManager.id,expectedManagerIds:[oldManager.id]}).expect(200);
+    expect((await get('manager/workspace',oldToken).expect(200)).body.teams).toHaveLength(0);
+    await get(`manager/teams/${team.id}/options`,oldToken).expect(403);
+    expect((await get('manager/workspace',newToken).expect(200)).body.teams.map(t=>t.id)).toContain(team.id);
+    await patch(`company/setup/teams/${team.id}/manager`,owner,{managerId:oldManager.id,expectedManagerIds:[oldManager.id]}).expect(409);
+    expect(await tx.teamMember.count({where:{teamId:team.id,isManager:true,endedAt:null}})).toBe(1);
+    // The same signed token must reflect changed grants and account state immediately.
+    await get('manager/area-catalog',newToken).expect(200);
+    const managerRole=await tx.role.findUniqueOrThrow({where:{code:'TEAM_MANAGER'}});
+    const areaPermission=await tx.permission.findUniqueOrThrow({where:{code:'areas.view'}});
+    const grant=await tx.rolePermission.findUniqueOrThrow({where:{roleId_permissionId:{roleId:managerRole.id,permissionId:areaPermission.id}}});
+    await tx.rolePermission.delete({where:{id:grant.id}});
+    await get('manager/area-catalog',newToken).expect(403);
+    expect((await get('auth/me',newToken).expect(200)).body.permissions).not.toContain('areas.view');
+    await tx.rolePermission.create({data:grant});
+    await get('manager/area-catalog',newToken).expect(200);
+    const membership=await tx.userRole.findUniqueOrThrow({where:{userId_roleId:{userId:newManager.id,roleId:managerRole.id}}});
+    await tx.userRole.delete({where:{id:membership.id}});
+    await get('manager/area-catalog',newToken).expect(403);
+    await tx.userRole.create({data:membership});
+    const session=await login(newUsername);
+    for(const state of [{status:'SUSPENDED'},{status:'INACTIVE'},{deletedAt:new Date()}]){
+     await tx.user.update({where:{id:newManager.id},data:state});
+     await get('auth/me',newToken).expect(401);
+     await request(server).post('/api/v1/auth/login').send({username:newUsername,password}).expect(401);
+     await request(server).post('/api/v1/auth/refresh').send({refreshToken:session.refreshToken}).expect(401);
+     await tx.user.update({where:{id:newManager.id},data:{status:'ACTIVE',deletedAt:null}});
+    }
+    await get('manager/area-catalog',newToken).expect(200);
+    await tx.user.update({where:{id:newManager.id},data:{organizationId:null}});
+    await get('auth/me',newToken).expect(401);
+    await tx.user.update({where:{id:newManager.id},data:{organizationId:company.id}});
+    // Tenant-owned roles delegate supported operations without elevating the staff account.
+    const access=(await get('company/access',owner).expect(200)).body;
+    expect(access.permissions.length).toBeGreaterThan(0);
+    await get('company/access',newToken).expect(403);
+    await get(`platform/companies/${company.id}/access`,owner).expect(403);
+    await get(`platform/companies/${company.id}/access`,rootToken).expect(200);
+    const permission=async code=>(await tx.permission.findUniqueOrThrow({where:{code}})).id;
+    const targetWrite=await permission('targets.manage'),targetRead=await permission('targets.view');
+    const areaWrite=await permission('areas.manage'),specialtyWrite=await permission('specialties.manage');
+    const writer=(await post('company/access/roles',owner,{name:'Data entry',permissionIds:[targetWrite,areaWrite,specialtyWrite]}).expect(201)).body;
+    const reader=(await post(`platform/companies/${company.id}/access/roles`,rootToken,{name:'Reader',permissionIds:[targetRead]}).expect(201)).body;
+    await post('company/access/roles',owner,{name:'Escalation',permissionIds:[await permission('users.manage')]}).expect(400);
+    await patch(`company/access/roles/${writer.id}`,otherToken,{name:'Cross tenant',permissionIds:[],revision:0}).expect(403);
+    await patch(`company/access/roles/${managerRole.id}`,owner,{name:'System role',permissionIds:[],revision:0}).expect(403);
+    const staffUsername=randomUUID();
+    const staff=(await post('company/access/staff',owner,{name:'Clerk',username:staffUsername,password,roleId:writer.id}).expect(201)).body;
+    await post('company/access/staff',otherToken,{name:'Invalid',username:randomUUID(),password,roleId:writer.id}).expect(403);
+    const staffSession=await login(staffUsername),staffToken=staffSession.accessToken;
+    expect(staffSession.user.roles).toEqual(['COMPANY_STAFF']);
+    expect(staffSession.user.permissions).toContain('targets.view');
+    expect(staffSession.user.permissions).not.toContain('users.manage');
+    await get('company/access',staffToken).expect(403);
+    await get('company/setup',staffToken).expect(403);
+    await post('company/access/roles',staffToken,{name:'Self elevation',permissionIds:[]}).expect(403);
+    await post('company/setup/managers',staffToken,{name:'Denied',username:randomUUID(),password}).expect(403);
+    const staffProvince=(await post('company/setup/provinces',staffToken,{name:'Staff province'}).expect(201)).body;
+    const staffArea=(await post('manager/areas',staffToken,{name:'Staff area',provinceId:staffProvince.id}).expect(201)).body;
+    const specialty=(await post('company/setup/specialties',staffToken,{name:'Cardiology'}).expect(201)).body;
+    const targetClass=(await post('company/setup/classes',owner,{name:'A',code:'A'}).expect(201)).body;
+    const targetBody={type:'DOCTOR',name:'Scoped doctor',areaId:staffArea.id,targetClassId:targetClass.id,specialtyId:specialty.id};
+    const doctor=(await post('manager/targets',staffToken,targetBody).expect(201)).body;
+    const options=(await get('manager/target-options',staffToken).expect(200)).body;
+    expect(options.areas.map(a=>a.id)).toContain(staffArea.id);
+    await get('manager/targets?type=DOCTOR',staffToken).expect(200);
+    await get('manager/doctors/export',staffToken).expect(200);
+    const deleteBody={type:'DOCTOR',ids:[doctor.id]};
+    await post('manager/targets/bulk-delete',staffToken,deleteBody).expect(403);
+    await post('manager/targets/bulk-delete',owner,{type:'DOCTOR',ids:[]}).expect(400);
+    await post('manager/targets/bulk-delete',owner,{type:'DOCTOR',ids:[doctor.id,doctor.id]}).expect(400);
+    await post('manager/targets/bulk-delete',owner,{type:'DOCTOR',ids:['not-a-uuid']}).expect(400);
+    await post('manager/targets/bulk-delete',otherToken,deleteBody).expect(409);
+    const deletable=(await post('manager/targets',staffToken,{...targetBody,name:'Deletable doctor'}).expect(201)).body;
+    await post('manager/targets/bulk-delete',owner,{type:'DOCTOR',ids:[deletable.id,randomUUID()]}).expect(409);
+    expect((await tx.fieldTarget.findUniqueOrThrow({where:{id:deletable.id}})).deletedAt).toBeNull();
+    await post('manager/targets/bulk-delete',owner,{type:'DOCTOR',ids:[deletable.id]}).expect(201);
+    expect((await get('manager/targets?type=DOCTOR',owner).expect(200)).body.items.map(t=>t.id)).not.toContain(deletable.id);
+    const deleteRole=(await post('company/access/roles',owner,{name:'Delete only',permissionIds:[await permission('targets.delete')]}).expect(201)).body;
+    const deleteRolePermission=await tx.rolePermission.findMany({where:{roleId:deleteRole.id},include:{permission:true}});
+    expect(deleteRolePermission.map(p=>p.permission.code)).toContain('targets.delete');
+    expect(deleteRolePermission.map(p=>p.permission.code)).not.toContain('targets.manage');
+
+    const otherProvince=(await post('company/setup/provinces',otherToken,{name:'Other province'}).expect(201)).body;
+    await post('manager/areas',staffToken,{name:'Denied',provinceId:otherProvince.id}).expect(403);
+    await patch(`company/access/roles/${writer.id}`,owner,{name:'Data entry',permissionIds:[targetRead],revision:0}).expect(200);
+    await patch(`company/access/roles/${writer.id}`,owner,{name:'Stale',permissionIds:[],revision:0}).expect(409);
+    await patch(`manager/targets/${doctor.id}`,staffToken,targetBody).expect(403);
+    await post('company/setup/provinces',staffToken,{name:'No longer allowed'}).expect(403);
+    expect((await get('company/staff-workspace',staffToken).expect(200)).body.permissions).not.toContain('targets.manage');
+    await get('manager/targets?type=DOCTOR',staffToken).expect(200);
+    const staffBefore=(await get('company/access',owner).expect(200)).body.staff.find(u=>u.id===staff.id);
+    const staffEdit={name:'Clerk',username:staffUsername,roleId:reader.id,status:'SUSPENDED',expectedUpdatedAt:staffBefore.updatedAt};
+    await patch(`company/access/staff/${staff.id}`,otherToken,staffEdit).expect(403);
+    await patch(`company/access/staff/${company.ownerId}`,owner,staffEdit).expect(403);
+    await patch(`company/access/staff/${staff.id}`,owner,staffEdit).expect(200);
+    await patch(`company/access/staff/${staff.id}`,owner,staffEdit).expect(409);
+    await get('company/staff-workspace',staffToken).expect(401);
+    await request(server).post('/api/v1/auth/refresh').send({refreshToken:staffSession.refreshToken}).expect(401);
+    const audits=await tx.auditLog.findMany({where:{organizationId:company.id,entityType:{in:['CompanyRole','CompanyStaff']}}});
+    expect(audits.length).toBeGreaterThan(0);
+    expect(JSON.stringify(audits)).not.toContain(password);
+
+
+    // A repeated login name is throttled before password verification.
+    const blockedName=randomUUID();
+    for(let i=0;i<10;i++) await request(server).post('/api/v1/auth/login').send({username:blockedName,password}).expect(401);
+    const limited=await request(server).post('/api/v1/auth/login').send({username:blockedName,password}).expect(429);
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+    await request(server).post('/api/v1/auth/login').send({username:randomUUID(),password}).expect(401);
+   }finally{await app.close();}
+   throw rollback;
+  },{timeout:30000})).rejects.toBe(rollback);
+  expect(await prisma.organization.findUnique({where:{code}})).toBeNull();
+  }finally{await prisma.$disconnect();}
+ },40000);
+});

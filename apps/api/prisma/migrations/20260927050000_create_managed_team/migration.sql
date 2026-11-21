@@ -1,0 +1,2 @@
+INSERT INTO "Permission" ("id","code","name","createdAt") VALUES (gen_random_uuid(),'teams.create_own','إنشاء فرق ضمن المحافظات المدارة',CURRENT_TIMESTAMP) ON CONFLICT ("code") DO NOTHING;
+INSERT INTO "RolePermission" ("id","roleId","permissionId","createdAt") SELECT gen_random_uuid(),r."id",p."id",CURRENT_TIMESTAMP FROM "Role" r CROSS JOIN "Permission" p WHERE r."isSystem"=true AND r."code" IN ('TEAM_MANAGER','NATIONAL_MANAGER','SUPER_ADMIN') AND p."code"='teams.create_own' ON CONFLICT ("roleId","permissionId") DO NOTHING;

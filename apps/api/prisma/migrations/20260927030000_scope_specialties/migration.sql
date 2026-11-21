@@ -1,0 +1,2 @@
+CREATE TABLE "TeamScopeSpecialty" (id UUID PRIMARY KEY,"teamPeriodId" UUID NOT NULL,"specialtyId" UUID NOT NULL,CONSTRAINT "TeamScopeSpecialty_teamPeriodId_fkey" FOREIGN KEY ("teamPeriodId") REFERENCES "RepCycleTeamPeriod"(id) ON DELETE CASCADE ON UPDATE CASCADE,CONSTRAINT "TeamScopeSpecialty_specialtyId_fkey" FOREIGN KEY ("specialtyId") REFERENCES "Specialty"(id) ON DELETE RESTRICT ON UPDATE CASCADE);
+CREATE UNIQUE INDEX "TeamScopeSpecialty_teamPeriodId_specialtyId_key" ON "TeamScopeSpecialty"("teamPeriodId","specialtyId");

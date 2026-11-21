@@ -1,0 +1,1281 @@
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  runtime                = "nodejs"
+  moduleFormat           = "esm"
+  generatedFileExtension = "ts"
+  importFileExtension    = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TargetType {
+  DOCTOR
+  PHARMACY
+  HOSPITAL
+}
+
+enum CycleStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+enum RoundStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum VisitStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum LeaveDayPart {
+  FULL_DAY
+  HALF_DAY
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REJECT
+  ASSIGN
+  UNASSIGN
+  EXPORT
+}
+
+enum PharmacyAffiliation {
+  INDEPENDENT
+  UNION
+  CLINIC
+  HOSPITAL
+  GOVERNMENT
+}
+enum HospitalKind {
+  PUBLIC
+  PRIVATE
+  SPECIALIZED
+  MEDICAL_CENTER
+}
+enum LeaveType {
+  ANNUAL
+  SICK
+  EMERGENCY
+  UNPAID
+}
+enum ReportPeriod {
+  DAILY
+  WEEKLY
+  CUSTOM
+}
+
+model Organization {
+ salesAgents SalesAgent[]
+ salesVisits SalesVisit[]
+ salesOrders SalesOrder[]
+
+  id     String             @id @default(uuid()) @db.Uuid
+  name   String
+  code   String             @unique
+  status OrganizationStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  settings           OrganizationSettings?
+  defaultWorkingDays OrganizationWorkingDayRule[]
+
+  companyRoles     Role[]
+  users            User[]
+  repProfiles      RepProfile[]
+  provinces        Province[]
+  areas            Area[]
+  teams            Team[]
+  specialties      Specialty[]
+  targetClasses    TargetClass[]
+  targets          FieldTarget[]
+  products         Product[]
+  cycles           Cycle[]
+  repCycleProfiles RepCycleProfile[]
+  rounds           FieldRound[]
+  visits           Visit[]
+  leaveRequests    LeaveRequest[]
+  leaveBalances    LeaveBalance[]
+  notifications    Notification[]
+  reports          RepReport[]
+  auditLogs        AuditLog[]
+
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model OrganizationSettings {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @unique @db.Uuid
+
+  timezone                String @default("Asia/Damascus")
+  defaultDailyVisitTarget Int    @default(8)
+  defaultAnnualLeaveDays  Float  @default(12)
+  defaultCycleDays        Int    @default(45)
+  cycleSchedule           Json?
+  roundEditWindowHours    Int    @default(0)
+  roundLocationPolicy     String @default("DISABLED")
+  branding                Json?
+  brandingRevision        Int    @default(0)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model OrganizationWorkingDayRule {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  weekday Int
+
+  isWorking      Boolean @default(true)
+  workloadFactor Float   @default(1)
+
+  startTime String?
+  endTime   String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, weekday])
+}
+
+model User {
+ salesVisits SalesVisit[]
+ salesOrders SalesOrder[] @relation("SalesAuthor")
+ reviewedSalesOrders SalesOrder[] @relation("SalesReviewer")
+
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String? @db.Uuid
+
+  name         String
+  email        String? @unique
+  username     String  @unique
+  passwordHash String
+
+  phone  String?
+  status UserStatus @default(ACTIVE)
+
+  lastLoginAt DateTime? @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt   DateTime? @db.Timestamptz(3)
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  roles           UserRole[]
+  teamMemberships TeamMember[]
+  repProfile      RepProfile?
+  repCycles       RepCycleProfile[]
+
+  rounds FieldRound[]
+  visits Visit[]
+
+  leaveRequests         LeaveRequest[] @relation("LeaveRequester")
+  reviewedLeaveRequests LeaveRequest[] @relation("LeaveReviewer")
+  leaveBalances         LeaveBalance[]
+
+  reports RepReport[]
+  leaveApprovalAssignments RepProfile[] @relation("LeaveApprover")
+  assignedLeaveRequests LeaveRequest[] @relation("AssignedLeaveApprover")
+
+  refreshTokens RefreshToken[]
+  notifications Notification[]
+  auditLogs     AuditLog[]     @relation("AuditActor")
+  createdTargets FieldTarget[] @relation("TargetCreatedBy")
+
+  @@index([organizationId, status])
+  @@index([deletedAt])
+}
+
+model Role {
+  organizationId String? @db.Uuid
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  revision Int @default(0)
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique
+  name        String
+  description String?
+  isSystem    Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@index([organizationId])
+}
+
+model Permission {
+  id          String @id @default(uuid()) @db.Uuid
+  code        String @unique
+  name        String
+  description String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  roles RolePermission[]
+}
+
+model UserRole {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  roleId String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model RefreshToken {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  tokenHash String @unique
+  expiresAt DateTime @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Province {
+ salesAgents SalesAgent[]
+ salesVisits SalesVisit[]
+ salesOrders SalesOrder[]
+
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  name String
+  code String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  areaGroups         AreaGroup[]
+  areas              Area[]
+  teams              Team[]
+  provinceClassRules CycleProvinceClassRule[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([deletedAt])
+}
+
+model AreaGroup {
+  id String @id @default(uuid()) @db.Uuid
+  provinceId String @db.Uuid
+  name String
+  sortOrder Int @default(0)
+  province Province @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  areas Area[]
+  @@unique([provinceId, name])
+}
+
+model Area {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  provinceId     String @db.Uuid
+
+  groupId String? @db.Uuid
+  group AreaGroup? @relation(fields: [groupId], references: [id], onDelete: Restrict)
+
+  name String
+  code String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  province     Province     @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+
+  teamAreas       TeamArea[]
+  targetLocations TargetLocation[]
+  repCycleAreas   RepCycleArea[]
+  teamScopeAreas TeamScopeArea[]
+
+  @@unique([organizationId, provinceId, name])
+  @@index([organizationId])
+  @@index([provinceId])
+  @@index([groupId])
+  @@index([deletedAt])
+}
+
+model Team {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  provinceId     String? @db.Uuid
+
+  name String
+  code String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  province     Province?    @relation(fields: [provinceId], references: [id], onDelete: SetNull)
+
+  reports RepReportTeam[]
+  members         TeamMember[]
+  areas           TeamArea[]
+  products        TeamProduct[]
+  specialties     TeamSpecialty[]
+  repCyclePeriods RepCycleTeamPeriod[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
+  @@index([provinceId])
+  @@index([deletedAt])
+}
+
+model TeamMember {
+  id     String @id @default(uuid()) @db.Uuid
+  teamId String @db.Uuid
+  userId String @db.Uuid
+
+  isManager Boolean @default(false)
+
+  startedAt DateTime @default(now()) @db.Timestamptz(3)
+  endedAt   DateTime? @db.Timestamptz(3)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([teamId, endedAt])
+  @@index([userId, endedAt])
+}
+
+model TeamArea {
+  id     String @id @default(uuid()) @db.Uuid
+  teamId String @db.Uuid
+  areaId String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  area Area @relation(fields: [areaId], references: [id], onDelete: Restrict)
+
+  @@unique([teamId, areaId])
+  @@index([areaId])
+}
+
+model TeamProduct {
+  id        String @id @default(uuid()) @db.Uuid
+  teamId    String @db.Uuid
+  productId String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([teamId, productId])
+  @@index([productId])
+}
+
+model TeamSpecialty {
+  id          String @id @default(uuid()) @db.Uuid
+  teamId      String @db.Uuid
+  specialtyId String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  specialty Specialty @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  @@unique([teamId, specialtyId])
+  @@index([specialtyId])
+}
+
+model RepProfile {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  userId         String @unique @db.Uuid
+
+  leaveApproverId String? @db.Uuid
+  leaveApprover User? @relation("LeaveApprover", fields: [leaveApproverId], references: [id], onDelete: SetNull)
+
+  employeeCode     String?
+  dailyVisitTarget Int?
+  hiredAt          DateTime? @db.Date
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, employeeCode])
+}
+
+model Specialty {
+  teamScopeSpecialties TeamScopeSpecialty[]
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  name String
+  code String?
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  targets        TargetSpecialty[]
+  teams          TeamSpecialty[]
+  repAssignments RepCycleSpecialty[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([deletedAt])
+}
+
+model FieldTarget {
+ salesVisits SalesVisit[]
+ salesOrders SalesOrder[]
+
+  targetClassId String? @db.Uuid
+  targetClass TargetClass? @relation(fields: [targetClassId], references: [id], onDelete: Restrict)
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  createdById    String? @db.Uuid
+
+  type TargetType
+  name String
+
+  phone String?
+  email String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation("TargetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  doctorProfile   DoctorProfile?
+  pharmacyProfile PharmacyProfile?
+  hospitalProfile HospitalProfile?
+
+  locations   TargetLocation[]
+  specialties TargetSpecialty[]
+
+  repAssignments RepCycleTarget[]
+  visits         Visit[]
+
+  @@index([organizationId, type, isActive])
+  @@index([organizationId, name])
+  @@index([deletedAt])
+}
+
+model DoctorProfile {
+  id       String @id @default(uuid()) @db.Uuid
+  targetId String @unique @db.Uuid
+
+  licenseNumber String?
+  notes         String?
+
+  target FieldTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+}
+
+model PharmacyProfile {
+  affiliation PharmacyAffiliation?
+  id       String @id @default(uuid()) @db.Uuid
+  targetId String @unique @db.Uuid
+
+  licenseNumber String?
+  notes         String?
+
+  target FieldTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+}
+
+model HospitalProfile {
+  id       String @id @default(uuid()) @db.Uuid
+  targetId String @unique @db.Uuid
+
+  kind HospitalKind?
+  notes String?
+
+  target FieldTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+}
+
+model TargetLocation {
+  id       String @id @default(uuid()) @db.Uuid
+  targetId String @db.Uuid
+  areaId   String @db.Uuid
+
+  label   String?
+  address String?
+
+  latitude  Float?
+  longitude Float?
+
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  target FieldTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  area   Area        @relation(fields: [areaId], references: [id], onDelete: Restrict)
+
+  @@index([targetId])
+  @@index([areaId, isPrimary])
+}
+
+model TargetSpecialty {
+  id          String @id @default(uuid()) @db.Uuid
+  targetId    String @db.Uuid
+  specialtyId String @db.Uuid
+
+  target    FieldTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  specialty Specialty   @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  @@unique([targetId, specialtyId])
+  @@index([specialtyId])
+}
+
+model TargetClass {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  code String
+  name String
+  rank Int
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  cycleRules         CycleClassRule[]
+  provinceCycleRules CycleProvinceClassRule[]
+  repCycleTargets    RepCycleTarget[]
+  fieldTargets       FieldTarget[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, rank])
+}
+
+model Product {
+ salesItems SalesOrderItem[]
+
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  name        String
+  code        String?
+  brandName   String?
+  genericName String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  teams          TeamProduct[]
+  repAssignments RepCycleProduct[]
+  visitProducts  VisitProduct[]
+  teamScopeProducts TeamScopeProduct[]
+  teamCreditProducts VisitTeamProduct[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
+  @@index([deletedAt])
+}
+
+model Cycle {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+
+  name     String
+  timezone String
+
+  startsAt DateTime @db.Date
+  endsAt   DateTime @db.Date
+
+  status CycleStatus @default(DRAFT)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  classRules         CycleClassRule[]
+  provinceClassRules CycleProvinceClassRule[]
+  workingDays        CycleWorkingDayRule[]
+  dayOverrides       CycleDayOverride[]
+
+  repProfiles RepCycleProfile[]
+  rounds      FieldRound[]
+  visits      Visit[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, status])
+  @@index([organizationId, startsAt, endsAt])
+}
+
+model CycleClassRule {
+  id            String @id @default(uuid()) @db.Uuid
+  cycleId       String @db.Uuid
+  targetClassId String @db.Uuid
+
+  requiredVisits Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  cycle       Cycle       @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  targetClass TargetClass @relation(fields: [targetClassId], references: [id], onDelete: Restrict)
+
+  @@unique([cycleId, targetClassId])
+  @@index([targetClassId])
+}
+
+model CycleProvinceClassRule {
+  id            String @id @default(uuid()) @db.Uuid
+  cycleId       String @db.Uuid
+  provinceId    String @db.Uuid
+  targetClassId String @db.Uuid
+
+  requiredVisits Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  cycle       Cycle       @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  province    Province    @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  targetClass TargetClass @relation(fields: [targetClassId], references: [id], onDelete: Restrict)
+
+  @@unique([cycleId, provinceId, targetClassId])
+  @@index([provinceId])
+  @@index([targetClassId])
+}
+
+model CycleWorkingDayRule {
+  id      String @id @default(uuid()) @db.Uuid
+  cycleId String @db.Uuid
+
+  weekday Int
+
+  isWorking      Boolean @default(true)
+  workloadFactor Float   @default(1)
+
+  startTime String?
+  endTime   String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  cycle Cycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleId, weekday])
+}
+
+model CycleDayOverride {
+  id      String @id @default(uuid()) @db.Uuid
+  cycleId String @db.Uuid
+
+  date DateTime @db.Date
+
+  isWorking      Boolean
+  workloadFactor Float   @default(1)
+  note           String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  cycle Cycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleId, date])
+}
+
+model RepCycleProfile {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  cycleId        String @db.Uuid
+  repId          String @db.Uuid
+
+  managerInstructions String?
+  aCoverageTarget Float?
+  dailyVisitTarget Int
+  isActive        Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cycle        Cycle        @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  rep          User         @relation(fields: [repId], references: [id], onDelete: Restrict)
+
+  teamPeriods  RepCycleTeamPeriod[]
+  areas        RepCycleArea[]
+  products     RepCycleProduct[]
+  specialties  RepCycleSpecialty[]
+  targets      RepCycleTarget[]
+
+  rounds FieldRound[]
+  visits Visit[]
+
+  @@unique([cycleId, repId])
+  @@index([organizationId, cycleId])
+  @@index([repId, isActive])
+}
+
+model RepCycleTeamPeriod {
+  id                String @id @default(uuid()) @db.Uuid
+  repCycleProfileId String @db.Uuid
+  teamId            String @db.Uuid
+
+  startedAt DateTime  @db.Date
+  endedAt   DateTime? @db.Date
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  repCycleProfile RepCycleProfile @relation(fields: [repCycleProfileId], references: [id], onDelete: Cascade)
+  team            Team            @relation(fields: [teamId], references: [id], onDelete: Restrict)
+
+  scopeSpecialties TeamScopeSpecialty[]
+  scopeConfigured Boolean @default(false)
+  scopeAreas TeamScopeArea[]
+  scopeProducts TeamScopeProduct[]
+  scopeTargets TeamScopeTarget[]
+
+  @@index([repCycleProfileId, startedAt])
+  @@index([teamId, endedAt])
+}
+
+model RepCycleArea {
+  id                String @id @default(uuid()) @db.Uuid
+  repCycleProfileId String @db.Uuid
+  areaId            String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  repCycleProfile RepCycleProfile @relation(fields: [repCycleProfileId], references: [id], onDelete: Cascade)
+  area            Area            @relation(fields: [areaId], references: [id], onDelete: Restrict)
+
+  @@unique([repCycleProfileId, areaId])
+  @@index([areaId])
+}
+
+model RepCycleProduct {
+  id                String @id @default(uuid()) @db.Uuid
+  repCycleProfileId String @db.Uuid
+  productId         String @db.Uuid
+
+  priority Int?
+  guidance String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  repCycleProfile RepCycleProfile @relation(fields: [repCycleProfileId], references: [id], onDelete: Cascade)
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([repCycleProfileId, productId])
+  @@index([productId])
+}
+
+model RepCycleSpecialty {
+  id                String @id @default(uuid()) @db.Uuid
+  repCycleProfileId String @db.Uuid
+  specialtyId       String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  repCycleProfile RepCycleProfile @relation(fields: [repCycleProfileId], references: [id], onDelete: Cascade)
+  specialty      Specialty       @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+
+  @@unique([repCycleProfileId, specialtyId])
+  @@index([specialtyId])
+}
+
+model RepCycleTarget {
+  id                String @id @default(uuid()) @db.Uuid
+  repCycleProfileId String @db.Uuid
+  targetId          String @db.Uuid
+  targetClassId     String @db.Uuid
+
+  requiredVisits Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  repCycleProfile RepCycleProfile @relation(fields: [repCycleProfileId], references: [id], onDelete: Cascade)
+  target          FieldTarget     @relation(fields: [targetId], references: [id], onDelete: Restrict)
+  targetClass     TargetClass     @relation(fields: [targetClassId], references: [id], onDelete: Restrict)
+
+  teamScopes TeamScopeTarget[]
+
+  @@unique([repCycleProfileId, targetId])
+  @@index([targetId])
+  @@index([targetClassId])
+}
+
+model FieldRound {
+  registrationLocation Json?
+  id                String @id @default(uuid()) @db.Uuid
+  organizationId    String @db.Uuid
+  cycleId           String @db.Uuid
+  repId             String @db.Uuid
+  repCycleProfileId String @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  revision Int @default(0)
+  clientRef String? @unique
+
+  status RoundStatus @default(ACTIVE)
+
+  startedAt DateTime  @default(now()) @db.Timestamptz(3)
+  endedAt   DateTime? @db.Timestamptz(3)
+
+  startLatitude  Float?
+  startLongitude Float?
+  endLatitude    Float?
+  endLongitude   Float?
+
+  notes String?
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cycle           Cycle           @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  rep             User            @relation(fields: [repId], references: [id], onDelete: Restrict)
+  repCycleProfile RepCycleProfile @relation(fields: [repCycleProfileId], references: [id], onDelete: Restrict)
+
+  visits Visit[]
+
+  @@index([organizationId, status])
+  @@index([cycleId, repId])
+  @@index([repId, status])
+  @@index([repId, startedAt])
+}
+
+model Visit {
+  id                String @id @default(uuid()) @db.Uuid
+  organizationId    String @db.Uuid
+  cycleId           String @db.Uuid
+  repId             String @db.Uuid
+  repCycleProfileId String @db.Uuid
+  targetId          String @db.Uuid
+  roundId           String? @db.Uuid
+
+  clientRef String? @unique
+
+  status VisitStatus @default(PLANNED)
+
+  plannedFor  DateTime? @db.Timestamptz(3)
+  startedAt   DateTime? @db.Timestamptz(3)
+  completedAt DateTime? @db.Timestamptz(3)
+
+  checkInLatitude   Float?
+  checkInLongitude  Float?
+  checkOutLatitude  Float?
+  checkOutLongitude Float?
+
+  notes String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cycle           Cycle           @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  rep             User            @relation(fields: [repId], references: [id], onDelete: Restrict)
+  repCycleProfile RepCycleProfile @relation(fields: [repCycleProfileId], references: [id], onDelete: Restrict)
+  target          FieldTarget     @relation(fields: [targetId], references: [id], onDelete: Restrict)
+  round           FieldRound?     @relation(fields: [roundId], references: [id], onDelete: SetNull)
+
+  products VisitProduct[]
+  teamCredits VisitTeamCredit[]
+
+  @@index([organizationId, completedAt])
+  @@index([cycleId, repId, status])
+  @@index([repId, status, plannedFor])
+  @@index([repId, completedAt])
+  @@index([targetId, completedAt])
+  @@index([repCycleProfileId])
+  @@index([roundId])
+}
+
+model VisitProduct {
+  id        String @id @default(uuid()) @db.Uuid
+  visitId   String @db.Uuid
+  productId String @db.Uuid
+
+  notes String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  visit   Visit   @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@unique([visitId, productId])
+  @@index([productId])
+}
+
+model LeaveRequest {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  requesterId    String @db.Uuid
+  reviewerId     String? @db.Uuid
+
+  clientRef String? @unique @db.Uuid
+  type LeaveType?
+  approverId String? @db.Uuid
+  approver User? @relation("AssignedLeaveApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  attachment LeaveAttachment?
+
+  startsOn DateTime @db.Date
+  endsOn   DateTime @db.Date
+  dayPart  LeaveDayPart @default(FULL_DAY)
+
+  requestedDays Float
+  reason        String?
+
+  status LeaveStatus @default(PENDING)
+
+  reviewedAt DateTime? @db.Timestamptz(3)
+  reviewNote String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requester    User         @relation("LeaveRequester", fields: [requesterId], references: [id], onDelete: Restrict)
+  reviewer     User?        @relation("LeaveReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([requesterId, startsOn])
+}
+
+model LeaveBalance {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  userId         String @db.Uuid
+
+  year Int
+
+  allocatedDays  Float
+  carriedDays    Float @default(0)
+  adjustmentDays Float @default(0)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, year])
+  @@index([organizationId, year])
+}
+
+model Notification {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  userId         String @db.Uuid
+
+  type    NotificationType @default(INFO)
+  title   String
+  message String
+  data    Json?
+
+  readAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model AuditLog {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String? @db.Uuid
+  actorId        String? @db.Uuid
+
+  action AuditAction
+
+  entityType String
+  entityId   String?
+
+  beforeData Json?
+  afterData  Json?
+
+  requestId String?
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actor       User?          @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+}
+
+// A cycle team period has an explicit scope, independent of the rep's other teams.
+model TeamScopeArea {
+  teamPeriodId String @db.Uuid
+  areaId String @db.Uuid
+  teamPeriod RepCycleTeamPeriod @relation(fields: [teamPeriodId], references: [id], onDelete: Cascade)
+  area Area @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  @@id([teamPeriodId, areaId])
+  @@index([areaId])
+}
+
+model TeamScopeProduct {
+  teamPeriodId String @db.Uuid
+  productId String @db.Uuid
+  teamPeriod RepCycleTeamPeriod @relation(fields: [teamPeriodId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  @@id([teamPeriodId, productId])
+  @@index([productId])
+}
+
+model TeamScopeTarget {
+  id String @id @default(uuid()) @db.Uuid
+  teamPeriodId String @db.Uuid
+  repCycleTargetId String @db.Uuid
+  requiredVisits Int
+  teamPeriod RepCycleTeamPeriod @relation(fields: [teamPeriodId], references: [id], onDelete: Restrict)
+  repCycleTarget RepCycleTarget @relation(fields: [repCycleTargetId], references: [id], onDelete: Restrict)
+  credits VisitTeamCredit[]
+  @@unique([teamPeriodId, repCycleTargetId])
+  @@index([repCycleTargetId])
+}
+
+// One physical visit may fulfill several independent team assignments.
+model VisitTeamCredit {
+  id String @id @default(uuid()) @db.Uuid
+  visitId String @db.Uuid
+  teamScopeTargetId String @db.Uuid
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  teamScopeTarget TeamScopeTarget @relation(fields: [teamScopeTargetId], references: [id], onDelete: Restrict)
+  products VisitTeamProduct[]
+  @@unique([visitId, teamScopeTargetId])
+  @@index([teamScopeTargetId])
+}
+
+// Product attribution is captured at registration, not inferred from later team edits.
+model VisitTeamProduct {
+  creditId String @db.Uuid
+  productId String @db.Uuid
+  credit VisitTeamCredit @relation(fields: [creditId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  @@id([creditId, productId])
+  @@index([productId])
+}
+
+model LeaveAttachment {
+  id String @id @default(uuid()) @db.Uuid
+  leaveId String @unique @db.Uuid
+  name String
+  mimeType String
+  content Bytes
+  leave LeaveRequest @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+}
+
+model RepReport {
+  id String @id @default(uuid()) @db.Uuid
+  clientRef String @unique @db.Uuid
+  organizationId String @db.Uuid
+  repId String @db.Uuid
+  period ReportPeriod
+  startsOn DateTime @db.Date
+  endsOn DateTime @db.Date
+  snapshot Json
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rep User @relation(fields: [repId], references: [id], onDelete: Restrict)
+  teams RepReportTeam[]
+  @@index([organizationId, repId, createdAt])
+}
+
+model RepReportTeam {
+  reportId String @db.Uuid
+  teamId String @db.Uuid
+  snapshot Json
+  report RepReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  @@id([reportId, teamId])
+  @@index([teamId])
+}
+
+model TeamScopeSpecialty {
+  id String @id @default(uuid()) @db.Uuid
+  teamPeriodId String @db.Uuid
+  specialtyId String @db.Uuid
+  teamPeriod RepCycleTeamPeriod @relation(fields: [teamPeriodId], references: [id], onDelete: Cascade)
+  specialty Specialty @relation(fields: [specialtyId], references: [id], onDelete: Restrict)
+  @@unique([teamPeriodId, specialtyId])
+}
+
+
+enum SalesOrderStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+enum SalesOfferType {
+  NONE
+  BONUS
+  DISCOUNT
+}
+model SalesAgent {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  provinceId String @db.Uuid
+  name String
+  isActive Boolean @default(true)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  province Province @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  orders SalesOrder[]
+  @@unique([organizationId, provinceId, name])
+}
+model SalesVisit {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  authorId String @db.Uuid
+  provinceId String @db.Uuid
+  targetId String @db.Uuid
+  clientRef String @db.Uuid
+  visitedOn DateTime @db.Date
+  notes String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  province Province @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  target FieldTarget @relation(fields: [targetId], references: [id], onDelete: Restrict)
+  orders SalesOrder[]
+  @@unique([authorId, clientRef])
+  @@index([organizationId, visitedOn])
+}
+model SalesOrder {
+  id String @id @default(uuid()) @db.Uuid
+  organizationId String @db.Uuid
+  authorId String @db.Uuid
+  provinceId String @db.Uuid
+  targetId String @db.Uuid
+  agentId String @db.Uuid
+  visitId String? @db.Uuid
+  clientRef String @db.Uuid
+  orderedOn DateTime @db.Date
+  notes String
+  currency String @db.VarChar(3)
+  status SalesOrderStatus @default(PENDING)
+  total Decimal @db.Decimal(20, 2)
+  reviewerId String? @db.Uuid
+  reviewNote String?
+  reviewedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  author User @relation("SalesAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  reviewer User? @relation("SalesReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  province Province @relation(fields: [provinceId], references: [id], onDelete: Restrict)
+  target FieldTarget @relation(fields: [targetId], references: [id], onDelete: Restrict)
+  agent SalesAgent @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  visit SalesVisit? @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  items SalesOrderItem[]
+  @@unique([authorId, clientRef])
+  @@index([organizationId, status, orderedOn])
+}
+model SalesOrderItem {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @db.Uuid
+  productId String @db.Uuid
+  productName String
+  quantity Int
+  unitPrice Decimal @db.Decimal(16, 2)
+  offerType SalesOfferType
+  bonusQuantity Int @default(0)
+  discountPercent Decimal @db.Decimal(5, 2)
+  total Decimal @db.Decimal(20, 2)
+  order SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  @@unique([orderId, productId])
+}

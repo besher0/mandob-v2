@@ -1,0 +1,2 @@
+INSERT INTO "Permission" ("id", "code", "name", "createdAt") VALUES (gen_random_uuid(), 'targets.delete', 'حذف الأطباء والصيدليات والمشافي', CURRENT_TIMESTAMP) ON CONFLICT ("code") DO NOTHING;
+INSERT INTO "RolePermission" ("id", "roleId", "permissionId") SELECT gen_random_uuid(), r."id", p."id" FROM "Role" r CROSS JOIN "Permission" p WHERE r."isSystem" = true AND r."organizationId" IS NULL AND r."code" IN ('SUPER_ADMIN', 'NATIONAL_MANAGER', 'TEAM_MANAGER') AND p."code" = 'targets.delete' ON CONFLICT ("roleId", "permissionId") DO NOTHING;

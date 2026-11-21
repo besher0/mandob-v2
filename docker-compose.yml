@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: medrep-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: medrep
+      POSTGRES_PASSWORD: medrep_dev_password
+      POSTGRES_DB: medrep
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - medrep_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medrep -d medrep"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  medrep_postgres_data:
